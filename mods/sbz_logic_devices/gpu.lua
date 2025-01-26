@@ -17,6 +17,9 @@ local fonts = loadfile(MP .. "/gpu_font.lua")()
 ---@type function, function
 local transform_buffer, convolution_matrix = loadfile(MP .. "/gpu_matrix_operations.lua")()
 
+---@type function
+local apply_shaders = loadfile(MP .. "/gpu_shader.lua")()
+
 local pos_buffers = setmetatable({}, {
     __index = function(t, k)
         if not rawget(t, k) then
@@ -34,7 +37,6 @@ minetest.register_privilege("place_gpus_unlimited", {
     give_to_admin = false,
     give_to_singleplayer = false,
 })
-
 
 local area_vec = vector.new(a, a, a)
 
@@ -718,6 +720,17 @@ local commands = {
             convolution_matrix(b, matrix_copy, x1, y1, x2, y2)
         end
     },
+    ["shader"] = {
+        type_checks = {
+            index = type_index,
+            shader = libox.type("string"),
+        },
+        f = function(buffers, command, pos, from_pos)
+            local b = buffers[command.index]
+            if b == nil then return end
+            apply_shaders(b, command.shader, pos, from_pos)
+        end
+    }
 }
 
 local function exec_command(buffers, command, pos, from_pos)
@@ -781,6 +794,16 @@ core.register_node("sbz_logic_devices:gpu", {
     end,
     after_place_node = after_place_node
 })
+
+mesecon.register_on_mvps_move(function(moved_nodes)
+    for i = 1, #moved_nodes do
+        local moved_node = moved_nodes[i]
+        if rawget(pos_buffers, h(moved_node.oldpos)) then
+            pos_buffers[h(moved_node.pos)] = pos_buffers[h(moved_node.oldpos)]
+            pos_buffers[h(moved_node.oldpos)] = nil
+        end
+    end
+end)
 
 
 unified_inventory.register_craft {

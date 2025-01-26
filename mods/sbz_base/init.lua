@@ -1,5 +1,3 @@
-minetest.log("action", "sbz base: init")
-
 local modname = minetest.get_current_modname()
 sbz_api = {
     debug = minetest.settings:get_bool("debug", false)
@@ -67,8 +65,20 @@ function iterate_around_pos(pos, func)
     end
 end
 
+function iterate_around_radius(pos, func, rad)
+    rad = rad or 1
+    for x = -rad, rad do
+        for y = -rad, rad do
+            for z = -rad, rad do
+                local vec = vector.new(x, y, z)
+                vec = vec + pos
+                func(vec)
+            end
+        end
+    end
+end
+
 -- generate an empty world with only the core block
-minetest.log("action", "sbz base: register mapgen")
 minetest.register_on_generated(function(minp, maxp, seed)
     if minp.x <= 0 and maxp.x >= 0 and minp.y <= 0 and maxp.y >= 0 and minp.z <= 0 and maxp.z >= 0 then
         local vm, emin, emax = minetest.get_mapgen_object("voxelmanip")
@@ -100,7 +110,6 @@ minetest.register_on_generated(function(minp, maxp, seed)
 end)
 
 -- new players always spawn on the core
-minetest.log("action", "sbz base: register new player")
 minetest.register_on_newplayer(function(player)
     player:set_pos({ x = 0, y = 1, z = 0 })
 
@@ -122,12 +131,11 @@ minetest.register_on_newplayer(function(player)
 end)
 
 minetest.register_on_joinplayer(function(ref, last_login)
-    -- TODO: REWRITE NOT TO USE THIS FUNCTION!!
-    assert(minetest.change_player_privs, "You have an outdated version of minetest, please update!")
-    minetest.change_player_privs(ref:get_player_name(), {
-        home = true,
-        tp = true
-    })
+    local privs = minetest.get_player_privs(ref:get_player_name())
+    privs.home = true
+    privs.tp = true
+    minetest.set_player_privs(ref:get_player_name(), privs)
+
     ref:override_day_night_ratio(0)
 end)
 
@@ -208,7 +216,6 @@ local function table_length(tbl)
     return count
 end
 
-minetest.log("action", "sbz base: register join player")
 minetest.register_on_joinplayer(function(player)
     -- send welcome messages
     minetest.chat_send_player(player:get_player_name(), "SkyBlock: Zero")
@@ -277,7 +284,6 @@ minetest.register_on_joinplayer(function(player)
 
     -- space gravity yeeeah
     player:set_physics_override({
-        gravity = 0.5,
         sneak_glitch = true, -- sneak glitch is super based
     })
 
@@ -332,43 +338,21 @@ minetest.register_globalstep(function(_)
 end)
 
 -- inter-mod utils
-function is_node_within_radius(pos, itemstring, radius)
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            for dz = -radius, radius do
-                local current_pos = {
-                    x = pos.x + dx,
-                    y = pos.y + dy,
-                    z = pos.z + dz
-                }
-                local node = minetest.get_node(current_pos)
-                if node.name == itemstring then
-                    return true
-                end
-            end
-        end
-    end
-    return false
+function count_nodes_within_radius(pos, nodenames, radius)
+    local radius_vector = vector.new(radius, radius, radius)
+    return #core.find_nodes_in_area(vector.subtract(pos, radius_vector), vector.add(pos, radius_vector), nodenames)
 end
 
-function count_nodes_within_radius(pos, itemstring, radius)
-    local count = 0
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            for dz = -radius, radius do
-                local current_pos = {
-                    x = pos.x + dx,
-                    y = pos.y + dy,
-                    z = pos.z + dz
-                }
-                local node = minetest.get_node(current_pos)
-                if node.name == itemstring then
-                    count = count + 1
-                end
-            end
-        end
-    end
-    return count
+-- returns the first node pos
+function is_node_within_radius(pos, nodenames, radius)
+    local radius_vector = vector.new(radius, radius, radius)
+    return core.find_nodes_in_area(vector.subtract(pos, radius_vector), vector.add(pos, radius_vector), nodenames)[1]
+end
+
+function is_air(pos)
+    local node = core.get_node(pos).name
+    local reg = minetest.registered_nodes[node]
+    return reg.air or reg.air_equivalent or node == "air"
 end
 
 -- mapgen aliases
@@ -384,6 +368,7 @@ dofile(MP .. "/override_for_areas.lua")
 dofile(MP .. "/override_descriptions.lua")
 dofile(MP .. "/vm.lua")
 dofile(MP .. "/queue.lua")
+dofile(MP .. "/override_for_other.lua")
 
 --vector.random_direction was added in 5.10-dev, but I use 5.9, so make sure this exists
 --code borrowed from builtin/vector.lua in 5.10-dev
@@ -448,3 +433,34 @@ sbz_api.filter_node_neighbors = function(start_pos, radius, filtering_function, 
     end
     return returning
 end
+
+--- Async is todo, and it wont be true async, just the function would be delayed, useful for something like a detonator
+---@param pos vector
+---@param power number
+---@param r number
+---@param async boolean
+sbz_api.explode = function(pos, r, power, async, owner)
+    owner = owner or ""
+    for _ = 1, 500 do
+        local raycast = minetest.raycast(pos, pos + vector.random_direction() * r, false)
+        local wear = 0
+        for pointed in raycast do
+            if pointed.type == "node" then
+                local nodename = minetest.get_node(pointed.under).name
+                wear = wear + (1 / minetest.get_item_group(nodename, "explody"))
+                --the explody group hence signifies roughly how many such nodes in a straight line it can break before stopping
+                --although this is very random
+                if wear > power or minetest.is_protected(pointed.under, owner) then break end
+                minetest.set_node(pointed.under, { name = minetest.registered_nodes[nodename]._exploded or "air" })
+            end
+        end
+    end
+    for _, obj in ipairs(minetest.get_objects_inside_radius(pos, r)) do
+        if obj:is_player() then
+            local dir = obj:get_pos() - pos
+            obj:add_velocity((vector.normalize(dir) + vector.new(0, 0.5, 0)) * 0.5 * (r - vector.length(dir)))
+        end
+    end
+end
+
+minetest.log("action", "Skyblock: Zero's Base Mod has finished loading.")

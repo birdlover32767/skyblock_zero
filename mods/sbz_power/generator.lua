@@ -285,6 +285,7 @@ sbz_api.register_stateful_generator("sbz_power:antimatter_generator", {
         "antimatter_gen_side.png"
     },
     input_inv = "input",
+    output_inv = "input",
     on_construct = function(pos)
         local meta = minetest.get_meta(pos)
         local inv = meta:get_inventory()
@@ -386,4 +387,13 @@ minetest.register_craft({
         { "sbz_resources:matter_dust",       "sbz_meteorites:neutronium",       "sbz_resources:antimatter_dust" },
         { "sbz_resources:reinforced_matter", "sbz_resources:reinforced_matter", "sbz_resources:reinforced_matter" }
     }
+})
+
+sbz_api.register_generator("sbz_power:creative_generator", {
+    description = "Creative Generator",
+    drawtype = "glasslike",
+    tiles = { { name = "creative_battery_power_gen.png^[colorize:purple:100", animation = { type = "vertical_frames", length = 0.5 } } },
+    groups = { creative = 1 },
+    power_generated = 10 ^ 9,
+    disable_pipeworks = true,
 })

@@ -1,9 +1,13 @@
-minetest.log("action", "sbz progression: init")
+sbz_progression = {}
+
 local modpath = minetest.get_modpath("sbz_progression")
 
 dofile(modpath .. "/quests.lua")
 dofile(modpath .. "/questbook.lua")
 dofile(modpath .. "/annoy.lua")
+
+local mod_storage = core.get_mod_storage()
+sbz_progression.lowest_node = mod_storage:get_int("lowest_node") or 0
 
 function displayDialogueLine(player_name, text)
     minetest.chat_send_player(player_name, "⌠ " .. text .. " ⌡")
@@ -25,7 +29,7 @@ displayGlobalDialougeLine = displayGlobalDialogueLine
 
 
 -- it will be funny if we all added quest items in the order of recency, not where they are placed on the questbook
-local achievment_table = {
+local achievement_table = {
     ["sbz_resources:matter_blob"] = "A bigger platform",
     ["sbz_resources:matter_stair"] = "Matter Stairs",
     ["sbz_resources:antimatter_dust"] = "Antimatter",
@@ -115,11 +119,30 @@ local achievment_table = {
     ["sbz_resources:drill"] = "Electric Drill",
     ["sbz_meteorites:meteorite_maker_off"] = "Meteorite Maker",
     ["sbz_resources:strange_cleaner"] = "Strange Blob Cleaner",
+    ["sbz_bio:fertilized_dirt"] = "Fertilized Dirt",
+    ["sbz_resources:laser_weapon"] = "Laser",
+
+    ["sbz_resources:storinator_bronze"] = "Better Storinators",
+    ["sbz_resources:storinator_neutronium"] = "Best Storinators",
+    ["drawers:drawer1"] = "Drawers",
+    ["drawers:drawer2"] = "Drawers",
+    ["drawers:drawer4"] = "Drawers",
+    ["drawers:upgrade_template"] = "Drawer Upgrades",
+    ["drawers:controller"] = "Drawer Controller",
+    ["sbz_chem:compressor_off"] = "Compressor",
+    ["sbz_chem:crystal_grower_off"] = "Crystal Grower",
+    ["sbz_power:very_advanced_battery"] = "Very Advanced Batteries",
+
+    ["jumpdrive:backbone"] = "Jumpdrive Backbone",
+    ["jumpdrive:fleet_controller"] = "Jumpdrive Fleet Controller",
+    ["jumpdrive:engine"] = "The Jumpdrive (engine)",
+    ["jumpdrive:warp_device"] = "Warp Device",
+    ["jumpdrive:station"] = "Jumpdrive Stations"
 }
 
 minetest.register_on_craft(function(itemstack, player, old_craft_grid, craft_inv)
-    if achievment_table[itemstack:get_name()] then
-        unlock_achievement(player:get_player_name(), achievment_table[itemstack:get_name()])
+    if achievement_table[itemstack:get_name()] then
+        unlock_achievement(player:get_player_name(), achievement_table[itemstack:get_name()])
     end
 end)
 
@@ -127,24 +150,45 @@ minetest.register_globalstep(function(dtime)
     for _, player in ipairs(minetest.get_connected_players()) do
         -- pos stuff
         local pos = player:get_pos()
-        if pos.y < -100 then
+        local safetynet_low = (player:get_meta():get_int("dynamic_safetynet") == 1) and sbz_progression.lowest_node or 0
+        if pos.y < safetynet_low - 100 then
             unlock_achievement(player:get_player_name(), "Emptiness")
         end
-        if pos.y < -110 then
+        if pos.y < safetynet_low - 110 then
             displayDialougeLine(player:get_player_name(), "You fell off the platform.")
             player:set_pos({ x = 0, y = 1, z = 0 })
         end
     end
 end)
 
-local achievment_in_inventory_table = {
+--[[
+core.register_chatcommand("dynamic_safetynet", {
+
+    params = "static | dynamic",
+
+    description =
+    "Define threshold for teleporting to core\n(static: y < 110m below core, dynamic: y < 110m below lowest placed node)",
+
+    func = function(name, params)
+        local meta = core.get_player_by_name(name):get_meta()
+        if params == "dynamic" then
+            meta:set_int("dynamic_safetynet", 1); return true,
+                "Successfully changed return threshold.\nYou can reverse this behavior with \"/dynamic_safetynet static\"."
+        end
+        if params == "static" then
+            meta:set_int("dynamic_safetynet", 0); return true, "Successfully changed return threshold."
+        end
+        return false
+    end,
+})--]]
+
+local achievement_in_inventory_table = {
     ["sbz_chem:gold_powder"] = "It's fake",
     ["sbz_chem:bronze_powder"] = "Bronze Age",
     ["sbz_chem:water_fluid_cell"] = "Liquid Water",
     ["sbz_bio:stemfruit"] = "Stemfruit",
 }
-
-local achievment_on_dig_table = {
+local achievement_on_dig_table = {
     ["sbz_meteorites:antineutronium"] = "Antineutronium",
     ["sbz_resources:strange_blob"] = "It's strange..."
 }
@@ -158,15 +202,22 @@ minetest.register_on_player_inventory_action(function(player, action, inv, inv_i
     end
     local player_name = player:get_player_name()
     local itemname = itemstack:get_name()
-    if achievment_in_inventory_table[itemname] then
-        unlock_achievement(player_name, achievment_in_inventory_table[itemname])
+    if achievement_in_inventory_table[itemname] then
+        unlock_achievement(player_name, achievement_in_inventory_table[itemname])
     end
 end)
 
 minetest.register_on_dignode(function(pos, oldnode, digger)
     local player_name = digger:get_player_name()
     local itemname = oldnode.name
-    if achievment_on_dig_table[itemname] then
-        unlock_achievement(player_name, achievment_on_dig_table[itemname])
+    if achievement_on_dig_table[itemname] then
+        unlock_achievement(player_name, achievement_on_dig_table[itemname])
     end
+end)
+
+core.register_on_placenode(function(pos, newnode, _, _, _, _)
+    if newnode.name == "sbz_resources:emitter" then return end
+    if pos.y >= sbz_progression.lowest_node then return end
+    sbz_progression.lowest_node = pos.y
+    mod_storage:set_int("lowest_node", pos.y)
 end)

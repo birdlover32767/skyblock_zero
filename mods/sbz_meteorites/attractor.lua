@@ -2,35 +2,51 @@ local elapsed = 0
 
 local function attract_meteorites(pos, dtime, t)
     elapsed = elapsed + dtime
-    for _, obj in ipairs(minetest.get_objects_inside_radius(pos, 200)) do
-        if not obj:is_player() and obj:get_luaentity() and obj:get_luaentity().name == "sbz_meteorites:meteorite" then
-            obj:add_velocity(t * dtime * sbz_api.get_attraction(obj:get_pos(), pos))
-            if elapsed > 1 then
-                minetest.add_particlespawner({
-                    time = 1,
-                    amount = math.floor(vector.distance(pos, obj:get_pos()) / 2),
-                    exptime = 2,
-                    size = { min = 2, max = 4 },
-                    drag = 3,
-                    pos = { min = pos, max = obj:get_pos() },
-                    texture = "meteorite_trail_emitter.png" ..
-                        (t < 0 and "^[colorize:#ffcccc:alpha" or "^[colorize:#888888:alpha"),
-                    animation = { type = "vertical_frames", aspect_width = 4, aspect_height = 4, length = -1 },
-                    glow = 7,
-                    attract = {
-                        kind = "line",
-                        origin = vector.zero(),
-                        origin_attached = obj,
-                        direction = pos - obj:get_pos(),
-                        strength = 3,
-                        die_on_contact = false
-                    }
-                })
-            end
+
+    local function inner_loop(obj)
+        if not ((obj:is_player() and obj:get_wielded_item()) or
+                (obj:get_luaentity() and obj:get_luaentity().name == "sbz_meteorites:meteorite")) then
+            return
         end
+
+        local magnitude = 256
+        if obj:is_player() then
+            local wielded_item = obj:get_wielded_item()
+            if wielded_item:is_empty() then return end
+            magnitude = (wielded_item:get_definition().groups or {}).attraction
+            if not magnitude then return end
+            magnitude = magnitude * wielded_item:get_count()
+        end
+        obj:add_velocity(t * dtime * sbz_api.get_attraction(obj:get_pos(), pos) * magnitude)
+        if elapsed > 1 then
+            minetest.add_particlespawner({
+                time = 1,
+                amount = math.floor(vector.distance(pos, obj:get_pos()) / 2),
+                exptime = 2,
+                size = { min = 2, max = 4 },
+                drag = 3,
+                pos = { min = pos, max = obj:get_pos() },
+                texture = "meteorite_trail_emitter.png" ..
+                    (t < 0 and "^[colorize:#ffcccc:alpha" or "^[colorize:#888888:alpha"),
+                animation = { type = "vertical_frames", aspect_width = 4, aspect_height = 4, length = -1 },
+                glow = 7,
+                attract = {
+                    kind = "line",
+                    origin = vector.zero(),
+                    origin_attached = obj,
+                    direction = pos - obj:get_pos(),
+                    strength = 3,
+                    die_on_contact = false
+                }
+            })
+        end
+    end
+    for _, obj in ipairs(minetest.get_objects_inside_radius(pos, 200)) do
+        inner_loop(obj)
     end
     if elapsed > 1 then elapsed = 0 end
 end
+
 sbz_api.attract_meteorites = attract_meteorites
 
 minetest.register_entity("sbz_meteorites:gravitational_attractor_entity", {
@@ -70,12 +86,12 @@ minetest.register_node("sbz_meteorites:gravitational_attractor", {
     description = "Gravitational Attractor",
     drawtype = "glasslike",
     tiles = { "gravitational_attractor.png" },
-    inventory_image = "gravitational_attractor_inventory.png",
-    wield_image = "gravitational_attractor_inventory.png",
+    inventory_image = "gravitational_attractor.png^(([combine:32x32:8,8=neutronium.png)^[resize:16x16)",
+    wield_image = "gravitational_attractor.png^(([combine:32x32:8,8=neutronium.png)^[resize:16x16)",
     paramtype = "light",
     sunlight_propagates = true,
     light_source = 7,
-    groups = { gravity = 100, matter = 1, cracky = 3, charged = 1 },
+    groups = { gravity = 100, matter = 1, cracky = 3, charged = 1, attraction = 512 },
     on_construct = function(pos)
         minetest.add_entity(pos, "sbz_meteorites:gravitational_attractor_entity")
     end,
@@ -95,17 +111,26 @@ minetest.register_node("sbz_meteorites:gravitational_repulsor", {
     description = "Gravitational Repulsor",
     drawtype = "glasslike",
     tiles = { "gravitational_repulsor.png" },
-    inventory_image = "gravitational_repulsor_inventory.png",
-    wield_image = "gravitational_repulsor_inventory.png",
+    inventory_image = "gravitational_repulsor.png^(([combine:32x32:8,8=neutronium.png)^[invert:rgb^[resize:16x16)",
+    wield_image = "gravitational_repulsor.png^(([combine:32x32:8,8=neutronium.png)^[invert:rgb^[resize:16x16)",
     paramtype = "light",
     sunlight_propagates = true,
     light_source = 7,
-    groups = { antigravity = 1, antimatter = 1, cracky = 3, charged = 1 },
+    groups = { antigravity = 1, antimatter = 1, cracky = 3, charged = 1, attraction = -512 },
     on_construct = function(pos)
         minetest.add_entity(pos, "sbz_meteorites:gravitational_attractor_entity")
     end,
     sounds = sbz_api.sounds.machine(),
 })
+
+mesecon.register_on_mvps_move(function(moved)
+    for i = 1, #moved do
+        local moved_node = moved[i]
+        if moved_node.name == "sbz_meteorites:gravitational_repulsor" or moved_node.name == "sbz_meteorites:gravitational_attractor" then
+            minetest.registered_nodes[moved_node.name].on_construct(moved_node.pos)
+        end
+    end
+end)
 
 minetest.register_craft({
     output = "sbz_meteorites:gravitational_repulsor",
@@ -118,5 +143,6 @@ minetest.register_craft({
 
 function sbz_api.get_attraction(pos1, pos2)
     local dir = pos2 - pos1
-    return vector.normalize(dir) * (16 / vector.length(dir)) ^ 2
+    local length = vector.length(dir)
+    return vector.normalize(dir) * (length ~= 0 and (length ^ (-2)) or 0)
 end
